@@ -1,293 +1,288 @@
 <?php
 require 'connect.php';
-$users = $pdo->query("SELECT uid,name FROM users")->fetchAll(PDO::FETCH_KEY_PAIR);
+
+// ambil data cards
+$cards = $pdo->query("SELECT * FROM cards")->fetchAll(PDO::FETCH_ASSOC);
+
+// ambil data logs terbaru
+$logs = $pdo->query("
+  SELECT r.uid, c.name, c.division, r.action, r.relays, r.created_at
+  FROM rfid_logs r
+  LEFT JOIN cards c ON r.uid = c.uid
+  ORDER BY r.id DESC
+  LIMIT 20
+")->fetchAll(PDO::FETCH_ASSOC);
+
+// hitung statistik
+$totalCards = count($cards);
+$totalGranted = $pdo->query("SELECT COUNT(*) FROM rfid_logs WHERE action='GRANTED'")->fetchColumn();
+$totalDenied = $pdo->query("SELECT COUNT(*) FROM rfid_logs WHERE action='DENIED'")->fetchColumn();
 ?>
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="id">
 <head>
-  <meta charset="utf-8">
-  <title>ESP32 RFID Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
-  <style>
-    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin:0; }
-    .sidebar { width: 220px; background: #1e2a38; color: #fff; min-height: 100vh; transition: 0.3s; }
-    .sidebar a { color: #cfd8dc; text-decoration: none; display: flex; align-items:center; padding: 12px 16px; border-radius: 8px; margin-bottom:5px; transition:0.2s; }
-    .sidebar a i { margin-right:10px; }
-    .sidebar a.active, .sidebar a:hover { background: #3a5068; color:#fff; }
-    .content { flex-grow:1; padding:20px; transition: 0.3s; }
-    .card { border-radius:1rem; box-shadow:0 4px 12px rgba(0,0,0,0.08); margin-bottom:20px; background: #fff; }
-    .relay-status { font-size:2rem; font-weight:bold; color:#0d6efd; }
-    .logs-table { max-height:540px; overflow-y:auto; display:block; border-radius: 0.5rem; }
-    .logs-table table { width:100%; border-collapse: separate; border-spacing:0; }
-    .logs-table th { position: sticky; top:0; background:#f8f9fa; z-index:2; }
-    .log-success td { background-color: #d1fae5; } 
-    .log-denied td { background-color: #fee2e2; } 
-    .log-unknown td { background-color: #fef3c7; } 
-    .table-hover tbody tr:hover { background-color: #e2e8f0; }
-    .btn-modern { border-radius: 0.5rem; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
-    .widget-card { text-align:center; padding:15px; border-radius:1rem; color:#fff; }
-    .widget-icon { font-size:2rem; margin-bottom:5px; }
-    .counter { font-size:1.8rem; font-weight:bold; }
-    @media(max-width:768px){ .sidebar{width:60px;} .sidebar a span{display:none;} }
-  </style>
+<meta charset="UTF-8">
+<title>Dashboard Access Control</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<style>
+body { font-family: 'Segoe UI', sans-serif; background: #f1f3f6; }
+.sidebar { position: fixed; top: 0; left: 0; width: 220px; height: 100%; background: #343a40; color: #fff; overflow-y: auto; padding-top: 20px; transition: 0.3s; }
+.sidebar a { display: block; padding: 12px 20px; color: #ddd; text-decoration: none; }
+.sidebar a:hover { background: #495057; color: #fff; }
+.sidebar.active { margin-left: -220px; }
+.content { margin-left: 220px; transition: 0.3s; padding: 20px; }
+.content.active { margin-left: 0; }
+.card-stats { border-left: 5px solid #0d6efd; transition: transform 0.2s; }
+.card-stats:hover { transform: scale(1.05); }
+.card-stats.granted { border-left-color: #28a745; }
+.card-stats.denied { border-left-color: #dc3545; }
+.table thead { background: #0d6efd; color: #fff; }
+.badge-action { font-size: 0.9rem; }
+</style>
 </head>
 <body>
-<div class="d-flex">
-  <!-- Sidebar -->
-  <div class="sidebar p-3 d-flex flex-column">
-    <h5 class="mb-3 text-center">ESP32 Dashboard</h5>
-    <a href="#" class="active" data-menu="logs"><i class="fa fa-file-alt"></i><span>Access Logs</span></a>
-    <a href="#" data-menu="users"><i class="fa fa-user"></i><span>User Management</span></a>
-    <a href="#" data-menu="relay"><i class="fa fa-bolt"></i><span>Relay State</span></a>
-    <a href="#" data-menu="charts"><i class="fa fa-chart-line"></i><span>Charts</span></a>
-  </div>
 
-  <!-- Content -->
-  <div class="content">
-    <!-- Dashboard Widgets -->
-    <div class="row mb-4" id="dashboardWidgets">
-      <div class="col-md-3 col-6">
-        <div class="card widget-card bg-primary">
-          <i class="fa fa-user widget-icon"></i>
-          <h5 class="counter" id="totalUsers">0</h5>
-          <p>Total Users</p>
+<!-- Sidebar -->
+<div class="sidebar active" id="sidebar">
+  <h5 class="text-center mb-3">Menu</h5>
+  <a href="#"><i class="fa fa-gauge"></i> Dashboard</a>
+  <a href="#cardsSection"><i class="fa fa-id-card"></i> Daftar Kartu</a>
+  <a href="division/division.php"><i class="fa fa-building"></i> Division</a>
+  <a href="#logsSection"><i class="fa fa-clock"></i> Log Akses</a>
+  <a href="#"><i class="fa fa-microchip"></i> Device</a>
+  <a href="#"><i class="fa fa-gear"></i> Setting</a>
+</div>
+
+<!-- Content -->
+<div class="content active" id="content">
+  <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top mb-3">
+    <div class="container-fluid">
+      <button class="btn btn-outline-primary me-2" id="toggleSidebar"><i class="fa fa-bars"></i></button>
+      <a class="navbar-brand" href="#">Dashboard Access Control</a>
+    </div>
+  </nav>
+
+  <div class="container-fluid">
+
+    <!-- Statistik Card -->
+    <div class="row mb-4">
+      <div class="col-md-4 mb-3">
+        <div class="card card-stats shadow-sm text-center">
+          <div class="card-body">
+            <h6>Total Card</h6>
+            <h3><?= $totalCards ?></h3>
+          </div>
         </div>
       </div>
-      <div class="col-md-3 col-6">
-        <div class="card widget-card bg-secondary">
-          <i class="fa fa-database widget-icon"></i>
-          <h5 class="counter" id="totalLogs">0</h5>
-          <p>Total Logs (Today)</p>
+      <div class="col-md-4 mb-3">
+        <div class="card card-stats granted shadow-sm text-center">
+          <div class="card-body">
+            <h6>Access Granted</h6>
+            <h3><?= $totalGranted ?></h3>
+          </div>
         </div>
       </div>
-      <div class="col-md-3 col-6">
-        <div class="card widget-card bg-success">
-          <i class="fa fa-check widget-icon"></i>
-          <h5 class="counter" id="grantedToday">0</h5>
-          <p>Granted Today</p>
-        </div>
-      </div>
-      <div class="col-md-3 col-6">
-        <div class="card widget-card bg-danger">
-          <i class="fa fa-times widget-icon"></i>
-          <h5 class="counter" id="deniedToday">0</h5>
-          <p>Denied Today</p>
+      <div class="col-md-4 mb-3">
+        <div class="card card-stats denied shadow-sm text-center">
+          <div class="card-body">
+            <h6>Akses Denied</h6>
+            <h3><?= $totalDenied ?></h3>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Access Logs -->
-    <div id="logsSection">
-      <h4>📜 Access Logs</h4>
-      <div class="logs-table card p-2">
-        <table class="table table-sm table-hover table-bordered">
-          <thead class="table-light">
-            <tr>
-              <th>Nama</th>
-              <th>UID</th>
-              <th>Time</th>
-              <th>Access</th>
-              <th>Floor</th>
-            </tr>
-          </thead>
-          <tbody id="logs"></tbody>
-        </table>
+    <!-- Daftar Kartu -->
+    <div id="cardsSection" class="mb-5">
+      <div class="d-flex justify-content-between mb-2">
+        <h5><i class="fa fa-id-card"></i> Daftar Kartu</h5>
+        <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addCardModal"><i class="fa fa-plus"></i> Add Card</button>
       </div>
-    </div>
-
-    <!-- User Management -->
-    <div id="usersSection" style="display:none;">
-      <h4>👤 User Management</h4>
-      <div class="card p-3">
-        <table class="table table-hover table-bordered" id="userTable">
-          <thead class="table-light">
+      <div class="table-responsive shadow-sm">
+        <table class="table table-bordered table-hover align-middle">
+          <thead>
             <tr>
               <th>UID</th>
               <th>Name</th>
+              <th>Division</th>
+              <th>Floor Akses</th>
               <th>Action</th>
             </tr>
           </thead>
-          <tbody></tbody>
+          <tbody>
+            <?php foreach ($cards as $c): ?>
+            <tr>
+              <td><?= htmlspecialchars($c['uid']) ?></td>
+              <td><?= htmlspecialchars($c['name']) ?></td>
+              <td><?= htmlspecialchars($c['division']) ?></td>
+              <td>
+                <?php
+                $mask = intval($c['mask']);
+                $relays = [];
+                for ($i=0; $i<8; $i++) if ($mask & (1<<$i)) $relays[] = "LT".($i+1);
+                echo $relays ? implode(", ", $relays) : "-";
+                ?>
+              </td>
+              <td>
+                <button class="btn btn-outline-primary btn-sm btn-edit"
+                        data-uid="<?= htmlspecialchars($c['uid']) ?>"
+                        data-name="<?= htmlspecialchars($c['name']) ?>"
+                        data-division="<?= htmlspecialchars($c['division']) ?>"
+                        data-mask="<?= intval($c['mask']) ?>">
+                  <i class="fas fa-edit"></i>
+                </button>
+                <form method="post" action="remove_card.php" class="d-inline" onsubmit="return confirm('Yakin ingin menghapus kartu ini?');">
+                  <input type="hidden" name="uid" value="<?= htmlspecialchars($c['uid']) ?>">
+                  <button type="submit" class="btn btn-outline-danger btn-sm"><i class="fas fa-trash"></i></button>
+                </form>
+              </td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
         </table>
-        <button id="addUserBtn" class="btn btn-success btn-sm btn-modern">Add New User</button>
       </div>
     </div>
 
-    <!-- Relay State -->
-    <div id="relaySection" style="display:none;">
-      <h4>⚡ Relay State</h4>
-      <div class="card text-center p-4">
-        <div id="relayState" class="relay-status">Loading...</div>
-        <small id="relayUpdate" class="text-muted"></small>
+    <!-- Log Access -->
+    <div id="logsSection">
+      <h5 class="mb-2"><i class="fa fa-clock"></i> Log Access (20 terbaru)</h5>
+      <div class="table-responsive shadow-sm">
+        <table class="table table-striped table-hover" id="logsTable">
+          <thead>
+            <tr>
+              <th>UID</th>
+              <th>Nama</th>
+              <th>Division</th>
+              <th>Action</th>
+              <th>Floor</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($logs as $l): ?>
+            <tr>
+              <td><?= htmlspecialchars($l['uid']) ?></td>
+              <td><?= htmlspecialchars($l['name']) ?></td>
+              <td><?= htmlspecialchars($l['division']) ?></td>
+              <td>
+                <?php if ($l['action'] === 'GRANTED'): ?>
+                  <span class="badge bg-success badge-action">Granted</span>
+                <?php elseif ($l['action'] === 'DENIED'): ?>
+                  <span class="badge bg-danger badge-action">Denied</span>
+                <?php else: ?>
+                  <span class="badge bg-secondary badge-action"><?= htmlspecialchars($l['action']) ?></span>
+                <?php endif; ?>
+              </td>
+              <td><?= htmlspecialchars($l['relays']) ?></td>
+              <td><?= htmlspecialchars($l['created_at']) ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <!-- Charts -->
-    <div id="chartsSection" style="display:none;">
-      <h4>📊 Access Events (Success vs Denied)</h4>
-      <div class="card p-3">
-        <canvas id="logChart" height="150"></canvas>
-      </div>
-    </div>
   </div>
 </div>
 
+<!-- Modal Add Card -->
+<div class="modal fade" id="addCardModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="post" action="add_card.php" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Tambah Kartu</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" name="uid" class="form-control mb-2" placeholder="UID" required>
+        <input type="text" name="name" class="form-control mb-2" placeholder="Nama" required>
+        <input type="text" name="division" class="form-control mb-2" placeholder="Divisi" required>
+        <label><strong>Pilih Relay Akses:</strong></label><br>
+        <?php for ($i=1;$i<=8;$i++): ?>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="relays[]" value="LT<?= $i ?>" id="lt<?= $i ?>">
+            <label class="form-check-label" for="lt<?= $i ?>">LT<?= $i ?></label>
+          </div>
+        <?php endfor; ?>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+        <button class="btn btn-primary" type="submit">Simpan</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Edit Card -->
+<div class="modal fade" id="editCardModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="post" action="edit_card.php" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit Kartu</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="uid_old" id="edit_uid_old">
+        <div class="mb-2">
+          <label>UID</label>
+          <input type="text" name="uid" id="edit_uid" class="form-control" required>
+        </div>
+        <div class="mb-2">
+          <label>Name</label>
+          <input type="text" name="name" id="edit_name" class="form-control" required>
+        </div>
+        <div class="mb-2">
+          <label>Divisi</label>
+          <input type="text" name="division" id="edit_division" class="form-control" required>
+        </div>
+        <label><strong>Floor Access:</strong></label><br>
+        <?php for ($i=1;$i<=8;$i++): ?>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input relay-checkbox" type="checkbox" name="relays[]" value="LT<?= $i ?>" id="edit_lt<?= $i ?>">
+            <label class="form-check-label" for="edit_lt<?= $i ?>">LT<?= $i ?></label>
+          </div>
+        <?php endfor; ?>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+        <button class="btn btn-primary" type="submit">Update</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-const device_token = "6c108269";
-let uidToName = <?php echo json_encode($users); ?>;
-
-// Counter animation
-function animateCounter(el, newValue){
-  let current = parseInt(el.textContent) || 0;
-  let target = parseInt(newValue);
-  let duration = 800;
-  let stepTime = Math.abs(Math.floor(duration / (target - current || 1)));
-  let start = current;
-  let end = target;
-  let step = end > start ? 1 : -1;
-
-  if(start === end) return;
-
-  let timer = setInterval(()=>{
-    start += step;
-    el.textContent = start;
-    if(start === end) clearInterval(timer);
-  }, stepTime);
-}
-
-// Sidebar menu click
-$(".sidebar a").click(function(e){
-  e.preventDefault();
-  $(".sidebar a").removeClass("active");
-  $(this).addClass("active");
-  let menu = $(this).data("menu");
-  $("#usersSection,#relaySection,#logsSection,#chartsSection").hide();
-  if(menu==="users") $("#usersSection").show();
-  if(menu==="relay") $("#relaySection").show();
-  if(menu==="logs") $("#logsSection").show();
-  if(menu==="charts") $("#chartsSection").show();
+// Sidebar toggle
+document.getElementById('toggleSidebar').addEventListener('click', function(){
+  document.getElementById('sidebar').classList.toggle('active');
+  document.getElementById('content').classList.toggle('active');
 });
 
-// Chart setup
-const ctx = document.getElementById('logChart').getContext('2d');
-const logChart = new Chart(ctx,{
-  type:'line',
-  data:{labels:[],datasets:[
-    {label:'Success',data:[],borderColor:'#28a745',backgroundColor:'rgba(40,167,69,0.2)',tension:0.3,fill:true,pointRadius:3},
-    {label:'Denied',data:[],borderColor:'#dc3545',backgroundColor:'rgba(220,53,69,0.2)',tension:0.3,fill:true,pointRadius:3}
-  ]},
-  options:{responsive:true,scales:{x:{title:{display:true,text:'Time'}},y:{beginAtZero:true,title:{display:true,text:'Count'}}}}
+// Tombol Edit
+$(document).on('click', '.btn-edit', function(){
+  let uid = $(this).data('uid');
+  let name = $(this).data('name');
+  let division = $(this).data('division');
+  let mask = parseInt($(this).data('mask'));
+  $('#edit_uid_old').val(uid);
+  $('#edit_uid').val(uid);
+  $('#edit_name').val(name);
+  $('#edit_division').val(division);
+  $('.relay-checkbox').prop('checked', false);
+  for(let i=0; i<8; i++){ if(mask & (1<<i)) $('#edit_lt'+(i+1)).prop('checked', true); }
+  new bootstrap.Modal(document.getElementById('editCardModal')).show();
 });
 
-// Load logs & relay
-function loadData(){
-  $.getJSON("getdata.php?device_token="+device_token,function(res){
-    if(!res.ok){ console.error(res); $("#relayState").text("Error").css("color","red"); return;}
-    if(res.device && res.device.relay_state){
-      $("#relayState").text(res.device.relay_state);
-      $("#relayUpdate").text("Updated: "+(res.device.updated_at||'-'));
-    } else { $("#relayState").text("Unknown"); }
-
-    if($("#logsSection").is(":visible") || $("#dashboardWidgets").length){
-      $("#logs").empty();
-      let successCount=0, deniedCount=0, totalLogs=0;
-      if(res.logs && res.logs.length>0){
-        for(let i=res.logs.length-1;i>=0;i--){
-          let l=res.logs[i];
-          let t=l.created_at||'-';
-          let m=l.message||'-';
-          let displayName='', uid='', access='', floor='', cls='log-unknown';
-          try{
-            let j=JSON.parse(m);
-            uid=j.uid||'';
-            displayName=uidToName[uid]||uid;
-            access=j.granted===true?'Granted':'Denied';
-            floor=j.mask||'';
-            if(j.granted===true){cls='log-success'; successCount++;}
-            else if(j.granted===false){cls='log-denied'; deniedCount++;}
-            totalLogs++;
-          }catch(e){}
-          $("#logs").prepend(`<tr class="${cls}">
-            <td>${displayName}</td>
-            <td>${uid}</td>
-            <td>${t}</td>
-            <td>${access}</td>
-            <td>${floor}</td>
-          </tr>`);
-        }
-      } else { $("#logs").append(`<tr><td colspan="5" class="text-center text-muted">No logs available</td></tr>`); }
-
-      // Update widgets with animation
-      animateCounter(document.getElementById("totalUsers"), Object.keys(uidToName).length);
-      animateCounter(document.getElementById("totalLogs"), totalLogs);
-      animateCounter(document.getElementById("grantedToday"), successCount);
-      animateCounter(document.getElementById("deniedToday"), deniedCount);
-
-      let now=new Date().toLocaleTimeString();
-      logChart.data.labels.push(now);
-      logChart.data.datasets[0].data.push(successCount);
-      logChart.data.datasets[1].data.push(deniedCount);
-      if(logChart.data.labels.length>10){
-        logChart.data.labels.shift();
-        logChart.data.datasets.forEach(ds=>ds.data.shift());
-      }
-      logChart.update();
-    }
+// AUTO REFRESH LOGS
+function loadLogs() {
+  $.get('get_logs.php', function(data) {
+    $("#logsTable tbody").html(data);
   });
 }
-
-// Users
-function loadUsers(){
-  $.getJSON('get_users.php',function(res){
-    const tbody=$("#userTable tbody"); tbody.empty();
-    if(res.ok && res.users){
-      res.users.forEach(u=>{
-        let highlight=u.name?'':'highlight';
-        tbody.append(`<tr class="${highlight}">
-          <td><input type="text" class="form-control form-control-sm uid-input" value="${u.uid}"></td>
-          <td><input type="text" class="form-control form-control-sm name-input" value="${u.name||''}"></td>
-          <td><button class="btn btn-primary btn-sm btn-modern save-btn">Save</button></td>
-        </tr>`);
-      });
-    }
-  });
-}
-
-$("#addUserBtn").click(function(){
-  const tbody=$("#userTable tbody");
-  let existingEmpty = tbody.find('tr.highlight').first();
-  if(existingEmpty.length>0){
-    existingEmpty.find('input.uid-input').val('');
-    existingEmpty.find('input.name-input').val('');
-    existingEmpty[0].scrollIntoView({behavior:"smooth",block:"center"});
-  } else {
-    tbody.prepend(`<tr class="highlight">
-      <td><input type="text" class="form-control form-control-sm uid-input" value=""></td>
-      <td><input type="text" class="form-control form-control-sm name-input" value=""></td>
-      <td><button class="btn btn-primary btn-sm btn-modern save-btn">Save</button></td>
-    </tr>`);
-    tbody.find('tr.highlight').first()[0].scrollIntoView({behavior:"smooth",block:"center"});
-  }
-});
-
-$(document).on('click','.save-btn',function(){
-  const row=$(this).closest('tr');
-  const uid=row.find('input.uid-input').val().trim();
-  const name=row.find('input.name-input').val().trim();
-  if(uid===''){ alert('UID cannot be empty'); return; }
-  $.post('update_user.php',{uid,name},function(res){
-    if(res.ok){ alert('User saved!'); loadUsers(); uidToName[uid]=name; }
-    else alert('Error: '+res.err);
-  },'json');
-});
-
-setInterval(loadData,4000);
-loadData();
-loadUsers();
+setInterval(loadLogs, 5000);
 </script>
 </body>
 </html>
